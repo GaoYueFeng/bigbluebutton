@@ -10,6 +10,7 @@
 const BigBlueButtonGW = require('../bbb/pubsub/bbb-gw');
 const C = require('../bbb/messages/Constants');
 const Logger = require('../utils/Logger');
+const errors = require('../base/errors');
 
 module.exports = class BaseManager {
   constructor (connectionChannel, additionalChannels = [], logPrefix = C.BASE_MANAGER_PREFIX) {
@@ -19,6 +20,7 @@ module.exports = class BaseManager {
     this._connectionChannel = connectionChannel;
     this._additionalChanels = additionalChannels;
     this._logPrefix = logPrefix;
+    this._iceQueues = {};
   }
 
   async start() {
@@ -41,11 +43,49 @@ module.exports = class BaseManager {
     this._redisGateway.on(C.REDIS_MESSAGE, handler.bind(this));
   }
 
-  _stopSession(sessionId) {
+  _fetchSession (sessionId) {
+    return this._sessions[sessionId];
+  }
+
+  _fetchIceQueue (sessionId) {
+    if (this._iceQueues[sessionId] == null) {
+      this._iceQueues[sessionId] = [];
+    }
+
+    return this._iceQueues[sessionId] ;
+  }
+
+  _flushIceQueue (session, queue) {
+    if (queue) {
+      let candidate;
+      while(candidate = queue.pop()) {
+        session.onIceCandidate(candidate);
+      }
+    }
+  }
+
+  _deleteIceQueue (sessionId) {
+    if (this._iceQueues[sessionId]) {
+      delete this._iceQueues[sessionId];
+    }
+  }
+
+  _killConnectionSessions (connectionId) {
+    const keys = Object.keys(this._sessions);
+    keys.forEach((sessionId) => {
+      let session = this._sessions[sessionId];
+      if(session && session.connectionId === connectionId) {
+        let killedSessionId = session.connectionId + session.id + "-" + session.role;
+        this._stopSession(killedSessionId);
+      }
+    });
+  }
+
+  _stopSession (sessionId) {
     return new Promise(async (resolve, reject) => {
       Logger.info(this._logPrefix, 'Stopping session ' + sessionId);
       try {
-        if (!this._sessions || !sessionId) {
+        if (this._sessions == null|| sessionId == null) {
           return resolve();
         }
 
@@ -56,12 +96,12 @@ module.exports = class BaseManager {
           }
           delete this._sessions[sessionId];
           this._logAvailableSessions();
-          resolve();
+          return resolve();
         }
       }
       catch (err) {
-        Logger.err(error);
-        resolve();
+        Logger.error(err);
+        return resolve();
       }
     });
   }
@@ -70,7 +110,7 @@ module.exports = class BaseManager {
     return new Promise(async (resolve, reject) => {
       try {
         Logger.info(this._logPrefix, 'Stopping everything! ');
-        if (!this._sessions) {
+        if (this._sessions == null) {
           return resolve;
         }
 
@@ -101,4 +141,55 @@ module.exports = class BaseManager {
       Logger.debug(logInfo);
     }
   }
+
+  _handleError (logPrefix, connectionId, streamId, role, error) {
+    // Setting a default error in case it was unhandled
+    if (error == null) {
+      error = { code: 2200, reason: errors[2200] }
+    }
+
+    if (error && this._validateErrorMessage(error)) {
+      return error;
+    }
+
+    const { code } = error;
+    const reason = errors[code];
+
+    if (reason == null) {
+      return;
+    }
+
+    error.message = reason;
+
+    Logger.debug(logPrefix, "Handling error", error.code, error.message);
+    Logger.trace(logPrefix, error.stack);
+
+    return this._assembleErrorMessage(error, role, streamId, connectionId);
+  }
+
+  _assembleErrorMessage (error, role, streamId, connectionId) {
+    return {
+      connectionId,
+      type: this.sfuApp,
+      id: 'error',
+      role,
+      streamId,
+      code: error.code,
+      reason: error.message,
+    };
+  }
+
+  _validateErrorMessage (error) {
+    const {
+      connectionId = null,
+      type = null,
+      id = null,
+      role = null,
+      streamId = null,
+      code = null,
+      reason = null,
+    } = error;
+    return connectionId && type && id && role && streamId && code && reason;
+  }
+
 };

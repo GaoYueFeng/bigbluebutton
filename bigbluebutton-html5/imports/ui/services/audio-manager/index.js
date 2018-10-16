@@ -1,14 +1,19 @@
 import { Tracker } from 'meteor/tracker';
 import { makeCall } from '/imports/ui/services/api';
 import VertoBridge from '/imports/api/audio/client/bridge/verto';
+import KurentoBridge from '/imports/api/audio/client/bridge/kurento';
 import Auth from '/imports/ui/services/auth';
 import VoiceUsers from '/imports/api/voice-users';
 import SIPBridge from '/imports/api/audio/client/bridge/sip';
+import logger from '/imports/startup/client/logger';
 import { notify } from '/imports/ui/services/notification';
+import browser from 'browser-detect';
 
 const MEDIA = Meteor.settings.public.media;
+const MEDIA_TAG = MEDIA.mediaTag;
 const USE_SIP = MEDIA.useSIPAudio;
 const ECHO_TEST_NUMBER = MEDIA.echoTestNumber;
+const MAX_LISTEN_ONLY_RETRIES = 1;
 
 const CALL_STATES = {
   STARTED: 'started',
@@ -30,18 +35,26 @@ class AudioManager {
       isHangingUp: false,
       isListenOnly: false,
       isEchoTest: false,
+      isTalking: false,
       isWaitingPermissions: false,
       error: null,
       outputDeviceId: null,
       muteHandle: null,
     });
+
+    this.useKurento = Meteor.settings.public.kurento.enableListenOnly;
   }
 
-  init(userData, messages) {
+  init(userData) {
     this.bridge = USE_SIP ? new SIPBridge(userData) : new VertoBridge(userData);
+    if (this.useKurento) {
+      this.listenOnlyBridge = new KurentoBridge(userData);
+    }
     this.userData = userData;
-    this.messages = messages;
     this.initialized = true;
+  }
+  setAudioMessages(messages) {
+    this.messages = messages;
   }
 
   defineProperties(obj) {
@@ -118,9 +131,12 @@ class AudioManager {
       .then(() => this.bridge.joinAudio(callOptions, this.callStateCallback.bind(this)));
   }
 
-  joinListenOnly() {
+  async joinListenOnly(retries = 0) {
     this.isListenOnly = true;
     this.isEchoTest = false;
+    const { name } = browser();
+    // The kurento bridge isn't a full audio bridge yet, so we have to differ it
+    const bridge  = this.useKurento? this.listenOnlyBridge : this.bridge;
 
     const callOptions = {
       isListenOnly: true,
@@ -128,25 +144,55 @@ class AudioManager {
       inputStream: this.createListenOnlyStream(),
     };
 
+    // Webkit ICE restrictions demand a capture device permission to release
+    // host candidates
+    if (name == 'safari') {
+      await this.askDevicesPermissions();
+    }
+
     // We need this until we upgrade to SIP 9x. See #4690
     const iceGatheringErr = 'ICE_TIMEOUT';
     const iceGatheringTimeout = new Promise((resolve, reject) => {
       setTimeout(reject, 12000, iceGatheringErr);
     });
 
+    const handleListenOnlyError = async (err) => {
+      if (iceGatheringTimeout) {
+        clearTimeout(iceGatheringTimeout);
+      }
+
+      logger.error('Listen only error:', err, 'on try', retries);
+      const error = {
+        type: 'MEDIA_ERROR',
+        message: this.messages.error.MEDIA_ERROR,
+      }
+      throw error;
+    }
+
     return this.onAudioJoining()
       .then(() => Promise.race([
-        this.bridge.joinAudio(callOptions, this.callStateCallback.bind(this)),
+        bridge.joinAudio(callOptions, this.callStateCallback.bind(this)),
         iceGatheringTimeout,
       ]))
-      .catch((err) => {
-        // If theres a iceGathering timeout we retry to join after asking device permissions
-        if (err === iceGatheringErr && !this.devicesInitialized) {
-          return this.askDevicesPermissions()
-            .then(() => this.joinListenOnly());
-        }
+      .catch(async (err) => {
+        if (retries < MAX_LISTEN_ONLY_RETRIES) {
+          // Fallback to SIP.js listen only in case of failure
+          if (this.useKurento) {
+            // Exit previous SFU session and clean audio tag state
+            window.kurentoExitAudio();
+            this.useKurento = false;
+            let audio = document.querySelector(MEDIA_TAG);
+            audio.muted = false;
+          }
 
-        throw err;
+          try {
+            await this.joinListenOnly(++retries);
+          } catch (err) {
+            return handleListenOnlyError(err);
+          }
+        } else {
+          handleListenOnlyError(err);
+        }
       });
   }
 
@@ -161,8 +207,12 @@ class AudioManager {
   exitAudio() {
     if (!this.isConnected) return Promise.resolve();
 
+    const bridge  = (this.useKurento && this.isListenOnly) ? this.listenOnlyBridge : this.bridge;
+
     this.isHangingUp = true;
-    return this.bridge.exitAudio();
+    this.isEchoTest = false;
+
+    return bridge.exitAudio();
   }
 
   transferCall() {
@@ -183,8 +233,17 @@ class AudioManager {
       const query = VoiceUsers.find({ intId: Auth.userID });
       this.muteHandle = query.observeChanges({
         changed: (id, fields) => {
-          if (fields.muted === this.isMuted) return;
-          this.isMuted = fields.muted;
+          if (fields.muted !== undefined && fields.muted !== this.isMuted) {
+            this.isMuted = fields.muted;
+          }
+
+          if (fields.talking !== undefined && fields.talking !== this.isTalking) {
+            this.isTalking = fields.talking;
+          }
+
+          if (this.isMuted) {
+            this.isTalking = false;
+          }
         },
       });
     }
@@ -203,8 +262,10 @@ class AudioManager {
     this.isConnected = false;
     this.isConnecting = false;
     this.isHangingUp = false;
+    this.isListenOnly = false;
 
     if (this.inputStream) {
+      window.defaultInputStream.forEach(track => track.stop());
       this.inputStream.getTracks().forEach(track => track.stop());
       this.inputDevice = { id: 'default' };
     }
@@ -235,8 +296,9 @@ class AudioManager {
         this.onAudioExit();
       } else if (status === FAILED) {
         this.error = error;
-        this.notify(this.messages.error[error], true);
-        console.error('Audio Error:', error, bridgeError);
+        this.notify(this.messages.error[error] || this.messages.error.GENERIC_ERROR, true);
+        logger.error('Audio Error:', error, bridgeError);
+        this.exitAudio();
         this.onAudioExit();
       }
     });
@@ -251,7 +313,26 @@ class AudioManager {
       new window.AudioContext() :
       new window.webkitAudioContext();
 
-    return this.listenOnlyAudioContext.createMediaStreamDestination().stream;
+    // Create a placeholder buffer to upstart audio context
+    const pBuffer = this.listenOnlyAudioContext.createBuffer(2, this.listenOnlyAudioContext.sampleRate * 3, this.listenOnlyAudioContext.sampleRate);
+
+    var dest = this.listenOnlyAudioContext.createMediaStreamDestination();
+
+    let audio = document.querySelector(MEDIA_TAG);
+
+    // Play bogus silent audio to try to circumvent autoplay policy on Safari
+    audio.src = 'resources/sounds/silence.mp3'
+
+    audio.play().catch(e => {
+      logger.warn('Error on playing test audio:', e);
+    });
+
+    return dest.stream;
+  }
+
+  isUsingAudio() {
+    return this.isConnected || this.isConnecting ||
+      this.isHangingUp || this.isEchoTest;
   }
 
   setDefaultInputDevice() {

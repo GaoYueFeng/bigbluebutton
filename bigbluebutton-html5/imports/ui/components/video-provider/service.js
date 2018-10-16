@@ -5,6 +5,7 @@ import Meetings from '/imports/api/meetings/';
 import Users from '/imports/api/users/';
 import mapUser from '/imports/ui/services/user/mapUser';
 import UserListService from '/imports/ui/components/user-list/service';
+import SessionStorage from '/imports/ui/services/storage/session';
 
 class VideoService {
   constructor() {
@@ -52,13 +53,12 @@ class VideoService {
   }
 
   exitVideo() {
-    this.isSharing = false;
     const exitVideoEvent = new Event('exitVideo');
     document.dispatchEvent(exitVideoEvent);
   }
 
   exitedVideo() {
-    console.warn('exitedVideo');
+    this.isSharing = false;
     this.isWaitingResponse = false;
     this.isConnected = false;
   }
@@ -113,8 +113,17 @@ class VideoService {
     return Auth.userID;
   }
 
+  userName() {
+    const currentUser = Users.findOne({ userId: Auth.userID });
+    return currentUser.name;
+  }
+
   meetingId() {
     return Auth.meetingID;
+  }
+
+  sessionToken() {
+    return Auth.sessionToken;
   }
 
   isConnected() {
@@ -135,6 +144,7 @@ export default {
   getAllUsers: () => videoService.getAllUsers(),
   webcamOnlyModerator: () => videoService.webcamOnlyModerator(),
   isLocked: () => videoService.isLocked(),
+  isSharing: () => videoService.isSharing,
   isConnected: () => videoService.isConnected,
   isWaitingResponse: () => videoService.isWaitingResponse,
   joinVideo: () => videoService.joinVideo(),
@@ -143,6 +153,8 @@ export default {
   sendUserShareWebcam: stream => videoService.sendUserShareWebcam(stream),
   sendUserUnshareWebcam: stream => videoService.sendUserUnshareWebcam(stream),
   userId: () => videoService.userId(),
+  userName: () => videoService.userName(),
   meetingId: () => videoService.meetingId(),
   getAllUsersVideo: () => videoService.getAllUsersVideo(),
+  sessionToken: () => videoService.sessionToken(),
 };

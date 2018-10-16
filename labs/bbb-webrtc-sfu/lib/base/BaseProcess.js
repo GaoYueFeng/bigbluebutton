@@ -27,21 +27,38 @@ module.exports = class BaseProcess {
 
   async stop () {
     try {
-      await this.manager.stopAll();
-      Logger.info(this.logPrefix, "Exiting process");
-      process.exit(0);
+      this.runningState = "STOPPING";
+      Promise.race([this.manager.stopAll(), this._failOver()]).then(() => {
+        Logger.info(this.logPrefix, "Exiting process with code 0");
+        process.exit();
+      });
     }
     catch (err) {
       Logger.error(this.logPrefix, err);
+      Logger.info(this.logPrefix, "Exiting process with code 1");
       process.exit(1);
     }
   }
 
+  _failOver () {
+    return new Promise((resolve, reject) => {
+      setTimeout(resolve, 5000);
+    });
+  }
+
   handleException (error) {
     Logger.error(this.logPrefix, 'TODO => Uncaught exception', error.stack);
+    if (this.runningState === "STOPPING") {
+      Logger.warn(this.logPrefix, "Exiting process with code 1");
+      process.exit(1);
+    }
   }
 
   handleRejection (reason, promise) {
     Logger.error(this.logPrefix, 'TODO => Unhandled Rejection at: Promise', promise, 'reason:', reason);
+    if (this.runningState === "STOPPING") {
+      Logger.warn(this.logPrefix, "Exiting process with code 1");
+      process.exit(1);
+    }
   }
 }

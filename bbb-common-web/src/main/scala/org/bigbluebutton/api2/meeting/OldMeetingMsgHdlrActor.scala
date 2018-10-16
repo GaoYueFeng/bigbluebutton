@@ -32,9 +32,11 @@ class OldMeetingMsgHdlrActor(val olgMsgGW: OldMessageReceivedGW)
       case m: UserLeftMeetingEvtMsg => handleUserLeftMeetingEvtMsg(m)
       case m: UserJoinedVoiceConfToClientEvtMsg => handleUserJoinedVoiceConfToClientEvtMsg(m)
       case m: UserLeftVoiceConfToClientEvtMsg => handleUserLeftVoiceConfToClientEvtMsg(m)
+      case m: UserRoleChangedEvtMsg => handleUserRoleChangedEvtMsg(m)
       case m: UserBroadcastCamStartedEvtMsg => handleUserBroadcastCamStartedEvtMsg(m)
       case m: UserBroadcastCamStoppedEvtMsg => handleUserBroadcastCamStoppedEvtMsg(m)
       case m: CreateBreakoutRoomSysCmdMsg => handleCreateBreakoutRoomSysCmdMsg(m)
+      case m: RecordingStatusChangedEvtMsg => handleRecordingStatusChangedEvtMsg(m)
       case _ => log.error("***** Cannot handle " + msg.envelope.name)
     }
   }
@@ -57,6 +59,7 @@ class OldMeetingMsgHdlrActor(val olgMsgGW: OldMessageReceivedGW)
        msg.body.room.parentId,
        msg.body.room.name,
        msg.body.room.sequence,
+       msg.body.room.freeJoin,
        msg.body.room.voiceConfId,
        msg.body.room.viewerPassword,
        msg.body.room.moderatorPassword,
@@ -67,6 +70,10 @@ class OldMeetingMsgHdlrActor(val olgMsgGW: OldMessageReceivedGW)
      ))
 
   }
+  
+  def handleRecordingStatusChangedEvtMsg(msg: RecordingStatusChangedEvtMsg): Unit = {
+    olgMsgGW.handle(new UpdateRecordingStatus(msg.header.meetingId, msg.body.recording));
+  }
 
   def handleCheckAlivePongSysMsg(msg: CheckAlivePongSysMsg): Unit = {
     olgMsgGW.handle(new org.bigbluebutton.api.messaging.messages.KeepAliveReply(msg.body.system, msg.body.timestamp))
@@ -74,7 +81,8 @@ class OldMeetingMsgHdlrActor(val olgMsgGW: OldMessageReceivedGW)
 
   def handleUserJoinedMeetingEvtMsg(msg: UserJoinedMeetingEvtMsg): Unit = {
     olgMsgGW.handle(new UserJoined(msg.header.meetingId, msg.body.intId,
-      msg.body.extId, msg.body.name, msg.body.role, msg.body.avatar, msg.body.guest, msg.body.waitingForAcceptance))
+      msg.body.extId, msg.body.name, msg.body.role, msg.body.avatar, msg.body.guest,
+      msg.body.waitingForAcceptance, msg.body.clientType))
 
   }
 
@@ -112,6 +120,10 @@ class OldMeetingMsgHdlrActor(val olgMsgGW: OldMessageReceivedGW)
 
   def handleUserBroadcastCamStoppedEvtMsg(msg: UserBroadcastCamStoppedEvtMsg): Unit = {
     olgMsgGW.handle(new UserUnsharedWebcam(msg.header.meetingId, msg.body.userId, msg.body.stream))
+  }
+  
+  def handleUserRoleChangedEvtMsg(msg: UserRoleChangedEvtMsg): Unit = {
+    olgMsgGW.handle(new UserRoleChanged(msg.header.meetingId, msg.body.userId, msg.body.role))
   }
 
 

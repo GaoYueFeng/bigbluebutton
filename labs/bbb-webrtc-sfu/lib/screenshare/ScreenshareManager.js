@@ -12,115 +12,84 @@ const Screenshare = require('./screenshare');
 const BaseManager = require('../base/BaseManager');
 const C = require('../bbb/messages/Constants');
 const Logger = require('../utils/Logger');
+const errors = require('../base/errors');
 
 module.exports = class ScreenshareManager extends BaseManager {
   constructor (connectionChannel, additionalChannels, logPrefix) {
     super(connectionChannel, additionalChannels, logPrefix);
+    this.sfuApp = C.SCREENSHARE_APP;
     this.messageFactory(this._onMessage);
     this._iceQueues = {};
   }
 
-  _onMessage(message) {
+  async _onMessage(message) {
     Logger.debug(this._logPrefix, 'Received message [' + message.id + '] from connection', message.connectionId);
 
-    let session;
-    let sessionId = message.voiceBridge;
-    let connectionId = message.connectionId;
-    let iceQueue;
+    const sessionId = message.voiceBridge;
+    const connectionId = message.connectionId;
+    const role = message.role;
+    const sdpOffer = message.sdpOffer
+    const callerName = message.callerName;
+    let iceQueue, session;
 
-    if(this._sessions[sessionId]) {
-      session = this._sessions[sessionId];
-    }
-
-    if (!this._iceQueues[sessionId] && message.voiceBridge) {
-      this._iceQueues[sessionId] = [];
-    }
-
-    if (this._iceQueues[sessionId]) {
-      iceQueue = this._iceQueues[sessionId] ;
-    }
-
+    session = this._fetchSession(sessionId);
+    iceQueue = this._fetchIceQueue(sessionId);
 
     switch (message.id) {
-
-      case 'presenter':
-
-        // Checking if there's already a Screenshare session started
-        // because we shouldn't overwrite it
-
-        if (!this._sessions[message.voiceBridge]) {
-          this._sessions[message.voiceBridge] = {}
-          this._sessions[message.voiceBridge] = session;
-        }
-
-        if(session) {
-          break;
-        }
-
-        session = new Screenshare(connectionId, this._bbbGW,
+      case 'start':
+        if (!session) {
+          session = new Screenshare(connectionId, this._bbbGW,
             sessionId, connectionId, message.vh, message.vw,
             message.internalMeetingId);
+          this._sessions[sessionId] = session;
+        }
 
-        this._sessions[sessionId] = {}
-        this._sessions[sessionId] = session;
-
-        // starts presenter by sending sessionID, websocket and sdpoffer
-        session._startPresenter(sessionId, message.sdpOffer, (error, sdpAnswer) => {
-          Logger.info(this._logPrefix, "Started presenter ", sessionId, " for connection", connectionId);
-          if (error) {
-            this._bbbGW.publish(JSON.stringify({
-              connectionId: session._id,
-              id : 'presenterResponse',
-              response : 'rejected',
-              message : error
-            }), C.FROM_SCREENSHARE);
-            return error;
-          }
-
-          this._bbbGW.publish(JSON.stringify({
-            connectionId: session._id,
-            id : 'presenterResponse',
-            response : 'accepted',
-            sdpAnswer : sdpAnswer
-          }), C.FROM_SCREENSHARE);
+        // starts screenshare peer with role by sending sessionID, websocket and sdpoffer
+        try {
+          const sdpAnswer = await session.start(sessionId, connectionId, sdpOffer, callerName, role)
+          Logger.info(this._logPrefix, "Started peer", sessionId, " for connection", connectionId);
 
           // Empty ice queue after starting session
           if (iceQueue) {
             let candidate;
             while(candidate = iceQueue.pop()) {
-              session.onIceCandidate(candidate);
+              session.onIceCandidate(candidate, role, callerName);
             }
           }
 
+          this._bbbGW.publish(JSON.stringify({
+            connectionId: connectionId,
+            type: C.SCREENSHARE_APP,
+            role: role,
+            id : 'startResponse',
+            response : 'accepted',
+            sdpAnswer : sdpAnswer
+          }), C.FROM_SCREENSHARE);
 
           session.once(C.MEDIA_SERVER_OFFLINE, (event) => {
             this._stopSession(sessionId);
           });
 
-          Logger.info(this._logPrefix, "Sending presenterResponse to presenter", sessionId, "for connection", session._id);
-        });
-        break;
-
-      case 'viewer':
-        if (message.sdpOffer && message.voiceBridge) {
-          if (session) {
-            Logger.info(this._logPrefix, "Starting screenshare viewer at", message.voiceBridge, " for viewer with connection ", message.connectionId);
-            session._startViewer(message.connectionId,
-                message.voiceBridge,
-                message.sdpOffer,
-                connectionId,
-                this._sessions[message.voiceBridge]._presenterEndpoint);
-            // Empty ice queue after starting session
-            if (iceQueue) {
-              let candidate;
-              while(candidate = iceQueue.pop()) {
-                session.onViewerIceCandidate(candidate);
-              }
-            }
-
-          } else {
-            // TODO ERROR HANDLING
+          // listen for presenter change to avoid inconsistent states on reconnection
+          if (role === C.SEND_ROLE) {
+            this._bbbGW.once(C.PRESENTER_ASSIGNED_2x+message.internalMeetingId, async (payload) => {
+              Logger.info(this._logPrefix, "Presenter changed, forcibly closing screensharing session at", message.internalMeetingId);
+              await this.closeSession(session, connectionId, role, sessionId);
+              this._bbbGW.publish(JSON.stringify({
+                connectionId: connectionId,
+                type: C.SCREENSHARE_APP,
+                id : 'close',
+              }), C.FROM_SCREENSHARE);
+            });
           }
+
+          Logger.info(this._logPrefix, "Sending startResponse to peer", sessionId, "for connection", session._id);
+        }
+        catch (error) {
+          let errorMessage = this._handleError(this._logPrefix, connectionId, callerName, role, error);
+          this._bbbGW.publish(JSON.stringify({
+            ...errorMessage
+          }), C.FROM_SCREENSHARE);
         }
         break;
 
@@ -134,54 +103,40 @@ module.exports = class ScreenshareManager extends BaseManager {
         }
         break;
 
-      case 'onIceCandidate':
-        if (session.constructor === Screenshare) {
-          session.onIceCandidate(message.candidate);
+      case 'iceCandidate':
+        if (session && session.constructor === Screenshare) {
+          session.onIceCandidate(message.candidate, role, callerName);
         } else {
           Logger.info(this._logPrefix, "Queueing ice candidate for later in screenshare", message.voiceBridge);
-          if (!iceQueue) {
-            this._iceQueues[sessionId] = [];
-            iceQueue = this._iceQueues[sessionId];
-          }
-
-          iceQueue.push(message.candidate);
-        }
-        break;
-
-      case 'viewerIceCandidate':
-        if (session) {
-          session.onViewerIceCandidate(message.candidate, connectionId);
-        } else {
-          Logger.info(this._logPrefix, "Queueing ice candidate for later in screenshare", message.voiceBridge);
-          if (!iceQueue) {
-            this._iceQueues[sessionId] = [];
-            iceQueue = this._iceQueues[sessionId];
-          }
-
           iceQueue.push(message.candidate);
         }
         break;
 
       case 'close':
         Logger.info(this._logPrefix, 'Connection ' + connectionId + ' closed');
-
-        if (message.role === 'presenter' && this._sessions[sessionId]) {
-          Logger.info(this._logPrefix, "Stopping presenter " + sessionId);
-          this._stopSession(sessionId);
-        }
-        if (message.role === 'viewer' && typeof session !== 'undefined') {
-          Logger.info(this._logPrefix, "Stopping viewer " + sessionId);
-          session.stopViewer(message.connectionId);
-        }
+        this.closeSession(session, connectionId, role, sessionId);
         break;
 
       default:
+        const errorMessage = this._handleError(this._logPrefix, connectionId, null, null, errors.SFU_INVALID_REQUEST);
         this._bbbGW.publish(JSON.stringify({
-          connectionId: session._id? session._id : 'none',
-          id : 'error',
-          message: 'Invalid message ' + message
+          ...errorMessage,
         }), C.FROM_SCREENSHARE);
         break;
+    }
+  }
+
+  async closeSession (session, connectionId, role, sessionId) {
+    if (session && session.constructor == Screenshare) {
+      if (role === C.SEND_ROLE && session) {
+        Logger.info(this._logPrefix, "Stopping presenter " + sessionId);
+        await this._stopSession(sessionId);
+        return;
+      }
+      if (role === C.RECV_ROLE && session) {
+        Logger.info(this._logPrefix, "Stopping viewer " + sessionId);
+        await session.stopViewer(connectionId);
+      }
     }
   }
 };

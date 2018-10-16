@@ -9,6 +9,10 @@ import MeetingEnded from '/imports/ui/components/meeting-ended/component';
 import LoadingScreen from '/imports/ui/components/loading-screen/component';
 import Settings from '/imports/ui/services/settings';
 import AudioManager from '/imports/ui/services/audio-manager';
+import logger from '/imports/startup/client/logger';
+import Users from '/imports/api/users';
+import Annotations from '/imports/api/annotations';
+import AnnotationsLocal from '/imports/ui/components/whiteboard/service';
 import IntlStartup from './intl';
 
 const propTypes = {
@@ -17,6 +21,7 @@ const propTypes = {
   subscriptionsReady: PropTypes.bool.isRequired,
   locale: PropTypes.string,
   endedCode: PropTypes.string,
+  approved: PropTypes.bool,
 };
 
 const defaultProps = {
@@ -24,6 +29,7 @@ const defaultProps = {
   errorCode: undefined,
   locale: undefined,
   endedCode: undefined,
+  approved: undefined,
 };
 
 class Base extends Component {
@@ -37,6 +43,13 @@ class Base extends Component {
 
     this.updateLoadingState = this.updateLoadingState.bind(this);
     this.updateErrorState = this.updateErrorState.bind(this);
+  }
+
+  componentWillUpdate() {
+    const { approved } = this.props;
+    const isLoading = this.state.loading;
+
+    if (approved && isLoading) this.updateLoadingState(false);
   }
 
   updateLoadingState(loading = false) {
@@ -66,11 +79,17 @@ class Base extends Component {
     }
 
     if (error || errorCode) {
+      logger.error(`User could not log in HTML5, hit ${errorCode}`);
       return (<ErrorScreen code={errorCode}>{error}</ErrorScreen>);
     }
 
     if (loading || !subscriptionsReady) {
       return (<LoadingScreen>{loading}</LoadingScreen>);
+    }
+    // this.props.annotationsHandler.stop();
+
+    if (subscriptionsReady) {
+      logger.info('Client loaded successfully');
     }
 
     return (<AppContainer {...this.props} baseControls={stateControls} />);
@@ -93,7 +112,7 @@ Base.propTypes = propTypes;
 Base.defaultProps = defaultProps;
 
 const SUBSCRIPTIONS_NAME = [
-  'users', 'chat', 'cursor', 'meetings', 'polls', 'presentations', 'annotations',
+  'users', 'chat', 'meetings', 'polls', 'presentations',
   'slides', 'captions', 'breakouts', 'voiceUsers', 'whiteboard-multi-user', 'screenshare',
 ];
 
@@ -112,7 +131,7 @@ const BaseContainer = withRouter(withTracker(({ params, router }) => {
 
   const subscriptionErrorHandler = {
     onError: (error) => {
-      console.error(error);
+      logger.error(error);
       return router.push('/logout');
     },
   };
@@ -120,9 +139,27 @@ const BaseContainer = withRouter(withTracker(({ params, router }) => {
   const subscriptionsHandlers = SUBSCRIPTIONS_NAME.map(name =>
     Meteor.subscribe(name, credentials, subscriptionErrorHandler));
 
+  const annotationsHandler = Meteor.subscribe('annotations', credentials, {
+    onReady: () => {
+      AnnotationsLocal.remove({});
+      Annotations.find({}, { reactive: false }).forEach((a) => {
+        try {
+          AnnotationsLocal.insert(a);
+        } catch (e) {
+          // TODO
+        }
+      });
+      annotationsHandler.stop();
+    },
+    ...subscriptionErrorHandler,
+  });
+
+  const subscriptionsReady = subscriptionsHandlers.every(handler => handler.ready());
   return {
+    approved: Users.findOne({ userId: Auth.userID, approved: true, guest: true }),
     locale,
-    subscriptionsReady: subscriptionsHandlers.every(handler => handler.ready()),
+    subscriptionsReady,
+    annotationsHandler,
   };
 })(Base));
 

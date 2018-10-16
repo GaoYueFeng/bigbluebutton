@@ -1,6 +1,7 @@
 import React from 'react';
 import { withTracker } from 'meteor/react-meteor-data';
 import { withModalMounter } from '/imports/ui/components/modal/service';
+import browser from 'browser-detect';
 import AudioModal from './component';
 import Service from '../service';
 
@@ -24,7 +25,7 @@ export default withModalMounter(withTracker(({ mountModal }) =>
         }
         reject(() => {
           Service.exitAudio();
-        })
+        });
       });
 
       return call.then(() => {
@@ -52,7 +53,9 @@ export default withModalMounter(withTracker(({ mountModal }) =>
     showPermissionsOvelay: Service.isWaitingPermissions(),
     listenOnlyMode,
     skipCheck,
+    audioLocked: Service.audioLocked(),
     joinFullAudioImmediately: !listenOnlyMode && skipCheck,
     joinFullAudioEchoTest: !listenOnlyMode && !skipCheck,
     forceListenOnlyAttendee: listenOnlyMode && forceListenOnly && !Service.isUserModerator(),
+    isIOSChrome: browser().name === 'crios',
   }))(AudioModalContainer));

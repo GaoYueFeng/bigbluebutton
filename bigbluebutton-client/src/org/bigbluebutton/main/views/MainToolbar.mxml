@@ -47,10 +47,12 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 		<mate:Listener type="{SettingsComponentEvent.ADD}" method="addSettingsComponent" />
 		<mate:Listener type="{SettingsComponentEvent.REMOVE}" method="removeSettingsComponent"/>
 		<mate:Listener type="{BBBEvent.CHANGE_RECORDING_STATUS}" method="onRecordingStatusChanged" />
+		<mate:Listener type="{BBBEvent.RECORD_AND_CLEAR_PREVIOUS_MARKERS}" method="onRecordAndClearPreviousMarkersChanged" />
 		<mate:Listener type="{SuccessfulLoginEvent.USER_LOGGED_IN}" method="refreshModeratorButtonsVisibility" />
 		<mate:Listener type="{ChangeMyRole.CHANGE_MY_ROLE_EVENT}" method="refreshRole" />
 		<mate:Listener type="{BBBEvent.CONFIRM_LOGOUT_END_MEETING_EVENT}" method="confirmEndSession" />
     	<mate:Listener type="{MeetingTimeRemainingEvent.TIME_REMAINING}" method="handleRemainingTimeUpdate" />
+		<mate:Listener type="{UpdateRecordingTimerEvent.UPDATE_TIMER}" method="handleUpdateRecordingTimer" />
 	</fx:Declarations>
 	<fx:Script>
 		<![CDATA[
@@ -79,6 +81,7 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 			import org.bigbluebutton.core.TimerUtil;
 			import org.bigbluebutton.core.UsersUtil;
 			import org.bigbluebutton.core.events.MeetingTimeRemainingEvent;
+			import org.bigbluebutton.core.events.UpdateRecordingTimerEvent;
 			import org.bigbluebutton.core.model.Config;
 			import org.bigbluebutton.core.model.LiveMeeting;
 			import org.bigbluebutton.main.events.BBBEvent;
@@ -97,6 +100,7 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 			import org.bigbluebutton.main.model.users.events.ConferenceCreatedEvent;
 			import org.bigbluebutton.main.model.users.events.ConnectionFailedEvent;
 			import org.bigbluebutton.modules.users.model.UsersOptions;
+			import org.bigbluebutton.util.browser.BrowserCheck;
 			import org.bigbluebutton.util.i18n.ResourceUtil;
 
 			private static const LOGGER:ILogger = getClassLogger(MainToolbar);
@@ -108,7 +112,7 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 			[Bindable] private var showToolbar:Boolean = false;
 			[Bindable] private var showGuestSettingsButton:Boolean = false;
 			[Bindable] private var showRecordButton:Boolean = false;
-			[Bindable] public var toolbarOptions:LayoutOptions;
+			[Bindable] private var toolbarOptions:LayoutOptions;
 			[Bindable] private var brandingOptions:BrandingOptions;
 			[Bindable] private var usersOptions:UsersOptions;
 
@@ -195,12 +199,24 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 					initBandwidthToolTip();
 				}
 			}
+			
 			private function handleRemainingTimeUpdate(e:MeetingTimeRemainingEvent):void {
 				// Display timer only if there is less than 30 minutes remaining
 				if (!timeRemaining.visible && e.timeLeftInSec <= 1800) {
 					timeRemaining.visible = true;
 				}
+				// The label.id is used to determine message to display. So make sure
+				// you change in the TimerUtil if you change the label.
 				TimerUtil.setCountDownTimer(timeRemaining, e.timeLeftInSec, true);
+			}
+			
+			private function handleUpdateRecordingTimer(e:UpdateRecordingTimerEvent):void {
+				if (e.time == 0) {
+					recordingTimer.visible = false;
+				} else {
+					recordingTimer.visible = true;
+					TimerUtil.setTimer(recordingTimer, e.time, LiveMeeting.inst().meetingStatus.isRecording);
+				}
 			}
 
 			private function retrieveMeetingName(e:ConferenceCreatedEvent):void {
@@ -226,6 +242,20 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 				}
 
 				logFlashPlayerCapabilities();
+				logBrowserInfo();
+			}
+			
+			private function logBrowserInfo():void {
+				var browser:Object = new Object();
+				browser.name = BrowserCheck.browserName;
+				browser.majorVersion = BrowserCheck.browserMajorVersion;
+				browser.fullVersion = BrowserCheck.browserFullVersion;
+				
+				var logData:Object = UsersUtil.initLogData();
+				logData.tags = ["initialization"];
+				logData.browser = browser;
+				logData.logCode = "browser_info";
+				LOGGER.info(JSON.stringify(logData));
 			}
 			
 			private function initBreakoutRibbon() : void {
@@ -282,7 +312,7 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
          var logData:Object = UsersUtil.initLogData();
          logData.tags = ["initialization"];
          logData.capabilities = getFlashPlayerCapabilities();
-         logData.message = "Flash Player Capabilities.";
+         logData.logCode = "flash_player_capabilities";
          LOGGER.info(JSON.stringify(logData));
      }
 
@@ -315,7 +345,11 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 
 					// Needs to be improved in case of RTL layout
 					PopUpUtil.lockPosition(logoutWindow, function():Point {
-						return new Point(width - logoutWindow.width - 5, btnLogout.y + btnLogout.height + 5)
+						if (ResourceUtil.getInstance().isRTLEnabled() && ResourceUtil.getInstance().getCurrentLanguageDirection() == Direction.RTL) {
+							return new Point(5, btnLogout.y + btnLogout.height + 5)
+						} else {
+							return new Point(width - logoutWindow.width - 5, btnLogout.y + btnLogout.height + 5)	
+						}
 					});
 				} else {
 					doLogout();
@@ -409,6 +443,8 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 				if (!StringUtils.isEmpty(brandingOptions.toolbarColor)) {
 					mainBox.setStyle("backgroundColor", uint("0x" + brandingOptions.toolbarColor.substr(1)));
 				}
+				
+				updateStyle();
 			}
 			
 			private function onDisconnectTest():void{
@@ -426,14 +462,18 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 			}
 			
 			private function localeChanged(event:LocaleChangeEvent) : void {
+				updateStyle();
+				initBreakoutRibbon();
+				updateMeetingNameLabel();
+			}
+			
+			private function updateStyle():void {
 				var styleNameExt : String = "";
 				if (ResourceUtil.getInstance().isRTLEnabled() && ResourceUtil.getInstance().getCurrentLanguageDirection() == Direction.RTL) {
 					styleNameExt = "RTL";
 				}
 				
 				btnLogout.styleName = "logoutButtonStyle" + styleNameExt;
-				
-				initBreakoutRibbon();
 			}
 
 			private function openSettings(e:Event = null):void{
@@ -461,21 +501,30 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 			private function focusLogoutButton(e:ShortcutEvent):void{
 				btnLogout.setFocus();
 			}
-      
-      private function onRecordingStatusChanged(event:BBBEvent):void {
-        meetingNameLbl.text = "";
-        
-        if (event.payload.recording) {
-          meetingNameLbl.text =  ResourceUtil.getInstance().getString('bbb.mainToolbar.recordingLabel.recording')
-		}
-        
-        if (toolbarOptions.showMeetingName) {
-          var meetingTitle:String = LiveMeeting.inst().meeting.name;                   
-          if (meetingTitle != null) {
-            meetingNameLbl.text += " " + meetingTitle;
-          } 
-        }
-      }
+			
+			private function onRecordingStatusChanged(event:BBBEvent):void {
+				updateMeetingNameLabel();
+			}
+			
+			private function updateMeetingNameLabel():void {
+				if (LiveMeeting.inst().meetingStatus.isRecording) {
+					meetingNameLbl.text = ResourceUtil.getInstance().getString('bbb.mainToolbar.recordingLabel.recording')
+				} else {
+					meetingNameLbl.text = "";
+					TimerUtil.stopTimer(recordingTimer.id);
+				}
+				
+				if (toolbarOptions.showMeetingName) {
+					var meetingTitle:String = LiveMeeting.inst().meeting.name;
+					if (meetingTitle != null) {
+						meetingNameLbl.text += " " + meetingTitle;
+					}
+				}
+			}
+			
+			private function onRecordAndClearPreviousMarkersChanged(event:BBBEvent):void {
+				recordingTimer.visible = false;
+			}
 
 			private function onNetStatsButtonClick(e:Event = null):void {
 				var d:Dispatcher = new Dispatcher();
@@ -567,6 +616,7 @@ with BigBlueButton; if not, see <http://www.gnu.org/licenses/>.
 				<mx:HBox id="addedBtnsDeskShare" />
 			</mx:HBox>
 			<mx:HBox id="rightBox" width="40%" height="100%" horizontalAlign="right" verticalAlign="middle" horizontalScrollPolicy="off">
+				<mx:Label id="recordingTimer" visible="false" includeInLayout="{recordingTimer.visible}" styleName="recordingTimerStyle"/>
 				<views:RecordButton id="recordBtn" visible="{showRecordButton}" includeInLayout="{showRecordButton}"/>
 				<views:WebRTCAudioStatus id="webRTCAudioStatus" height="30"/>
 				

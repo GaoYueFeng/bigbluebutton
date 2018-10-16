@@ -2,9 +2,10 @@ import Users from '/imports/api/users';
 import Auth from '/imports/ui/services/auth';
 import AudioManager from '/imports/ui/services/audio-manager';
 import Meetings from '/imports/api/meetings';
-import VoiceUsers from '/imports/api/voice-users';
+import mapUser from '/imports/ui/services/user/mapUser';
 
 const init = (messages) => {
+  AudioManager.setAudioMessages(messages);
   if (AudioManager.initialized) return;
   const meetingId = Auth.meetingID;
   const userId = Auth.userID;
@@ -26,11 +27,19 @@ const init = (messages) => {
     microphoneLockEnforced,
   };
 
-  AudioManager.init(userData, messages);
+  AudioManager.init(userData);
 };
 
-const isVoiceUserTalking = () =>
-  VoiceUsers.findOne({ intId: Auth.userID }).talking;
+const audioLocked = () => {
+  const userId = Auth.userID;
+  const User = mapUser(Users.findOne({ userId }));
+
+  const Meeting = Meetings.findOne({ meetingId: Auth.meetingID });
+  const lockSetting = Meeting.lockSettingsProp;
+  const audioLock = lockSetting ? lockSetting.disableMic : false;
+
+  return audioLock && User.isLocked;
+};
 
 export default {
   init,
@@ -43,8 +52,9 @@ export default {
   changeInputDevice: inputDeviceId => AudioManager.changeInputDevice(inputDeviceId),
   changeOutputDevice: outputDeviceId => AudioManager.changeOutputDevice(outputDeviceId),
   isConnected: () => AudioManager.isConnected,
-  isTalking: () => isVoiceUserTalking(),
+  isTalking: () => AudioManager.isTalking,
   isHangingUp: () => AudioManager.isHangingUp,
+  isUsingAudio: () => AudioManager.isUsingAudio(),
   isWaitingPermissions: () => AudioManager.isWaitingPermissions,
   isMuted: () => AudioManager.isMuted,
   isConnecting: () => AudioManager.isConnecting,
@@ -54,4 +64,5 @@ export default {
   isEchoTest: () => AudioManager.isEchoTest,
   error: () => AudioManager.error,
   isUserModerator: () => Users.findOne({ userId: Auth.userID }).moderator,
+  audioLocked,
 };

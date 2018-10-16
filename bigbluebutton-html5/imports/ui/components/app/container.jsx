@@ -7,6 +7,7 @@ import Auth from '/imports/ui/services/auth';
 import Users from '/imports/api/users';
 import Breakouts from '/imports/api/breakouts';
 import Meetings from '/imports/api/meetings';
+import logger from '/imports/startup/client/logger';
 
 import ClosedCaptionsContainer from '/imports/ui/components/closed-captions/container';
 
@@ -73,6 +74,8 @@ export default withRouter(injectIntl(withModalMounter(withTracker(({ router, int
     baseControls.updateLoadingState(intl.formatMessage(intlMessages.waitingApprovalMessage));
   }
 
+  logger.info('User joined meeting and subscribed to data successfully');
+
   // Check if user is removed out of the session
   Users.find({ userId: Auth.userID }).observeChanges({
     changed(id, fields) {
@@ -84,15 +87,18 @@ export default withRouter(injectIntl(withModalMounter(withTracker(({ router, int
     },
   });
 
-  // forcelly logged out when the meeting is ended
+  // forcefully log out when the meeting ends
   Meetings.find({ meetingId: Auth.meetingID }).observeChanges({
     removed() {
-      if (isMeetingBreakout) return;
-      router.push(`/ended/${410}`);
+      if (isMeetingBreakout) {
+        Auth.clearCredentials().then(window.close);
+      } else {
+        router.push(`/ended/${410}`);
+      }
     },
   });
 
-  // Close the widow when the current breakout room ends
+  // Close the window when the current breakout room ends
   Breakouts.find({ breakoutId: Auth.meetingID }).observeChanges({
     removed() {
       Auth.clearCredentials().then(window.close);
@@ -102,6 +108,8 @@ export default withRouter(injectIntl(withModalMounter(withTracker(({ router, int
   return {
     closedCaption: getCaptionsStatus() ? <ClosedCaptionsContainer /> : null,
     fontSize: getFontSize(),
+    userlistIsOpen: window.location.pathname.includes('users'),
+    chatIsOpen: window.location.pathname.includes('chat'),
   };
 })(AppContainer))));
 

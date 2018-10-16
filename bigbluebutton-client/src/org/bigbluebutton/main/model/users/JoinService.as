@@ -34,6 +34,7 @@ package org.bigbluebutton.main.model.users
   import org.bigbluebutton.core.UsersUtil;
   import org.bigbluebutton.main.events.MeetingNotFoundEvent;
   import org.bigbluebutton.main.model.users.events.ConnectionFailedEvent;
+  import org.bigbluebutton.util.i18n.ResourceUtil;
   
   public class JoinService
   {  
@@ -76,7 +77,7 @@ package org.bigbluebutton.main.model.users
     private function ioErrorHandler(event:IOErrorEvent):void {
       var logData:Object = UsersUtil.initLogData();
       logData.tags = ["initialization"];
-      logData.message = "IOError calling ENTER api."; 
+      logData.logCode = "enter_api_io_error"; 
       LOGGER.error(JSON.stringify(logData));
       
       var e:ConnectionFailedEvent = new ConnectionFailedEvent(ConnectionFailedEvent.USER_LOGGED_OUT);
@@ -123,13 +124,13 @@ package org.bigbluebutton.main.model.users
       
       var returncode:String = result.response.returncode;
       if (returncode == 'FAILED') {
-        logData.message = "Calling ENTER api failed."; 
+        logData.logCode = "enter_api_failed"; 
         LOGGER.info(JSON.stringify(logData));
         
         var dispatcher:Dispatcher = new Dispatcher();
-        dispatcher.dispatchEvent(new MeetingNotFoundEvent(result.response.logoutURL));			
+        dispatcher.dispatchEvent(new MeetingNotFoundEvent(ResourceUtil.getInstance().getString('bbb.mainshell.enterAPIFailed')));
       } else if (returncode == 'SUCCESS') {
-        logData.message = "Calling ENTER api succeeded."; 
+        logData.logCode = "enter_api_succeeded"; 
         LOGGER.info(JSON.stringify(logData));
         
         var apiResponse:EnterApiResponse = new EnterApiResponse();

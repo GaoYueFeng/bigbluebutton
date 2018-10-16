@@ -72,11 +72,14 @@ module.exports = class ConnectionManager {
       const video = await this._bbbGW.addSubscribeChannel(C.FROM_VIDEO);
       const audio = await this._bbbGW.addSubscribeChannel(C.FROM_AUDIO);
 
-      screenshare.on(C.REDIS_MESSAGE, (data) => {
+      const emitFunk = (data) => {
         this._emitter.emit('response', data);
-      });
+      };
 
-      video.on(C.REDIS_MESSAGE, (data) => {
+      screenshare.on(C.REDIS_MESSAGE, emitFunk);
+      video.on(C.REDIS_MESSAGE, emitFunk);
+
+      audio.on(C.REDIS_MESSAGE, (data) => {
         this._emitter.emit('response', data);
       });
 

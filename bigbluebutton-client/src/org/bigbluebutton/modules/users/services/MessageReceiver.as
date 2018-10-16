@@ -26,11 +26,13 @@ package org.bigbluebutton.modules.users.services
   import org.as3commons.logging.api.getClassLogger;
   import org.bigbluebutton.core.BBB;
   import org.bigbluebutton.core.EventConstants;
+  import org.bigbluebutton.core.TimerUtil;
   import org.bigbluebutton.core.UsersUtil;
   import org.bigbluebutton.core.events.BreakoutRoomsUsersListUpdatedEvent;
   import org.bigbluebutton.core.events.CoreEvent;
   import org.bigbluebutton.core.events.MeetingTimeRemainingEvent;
   import org.bigbluebutton.core.events.NewGuestWaitingEvent;
+  import org.bigbluebutton.core.events.UpdateRecordingTimerEvent;
   import org.bigbluebutton.core.events.UserEmojiChangedEvent;
   import org.bigbluebutton.core.events.UserStatusChangedEvent;
   import org.bigbluebutton.core.model.LiveMeeting;
@@ -54,6 +56,7 @@ package org.bigbluebutton.modules.users.services
   import org.bigbluebutton.modules.phone.events.AudioSelectionWindowEvent;
   import org.bigbluebutton.modules.screenshare.events.WebRTCViewStreamEvent;
   import org.bigbluebutton.modules.users.events.MeetingMutedEvent;
+  import org.bigbluebutton.util.i18n.ResourceUtil;
   
   public class MessageReceiver implements IMessageListener
   {
@@ -135,6 +138,9 @@ package org.bigbluebutton.modules.users.services
         case "UserEmojiChangedEvtMsg":
           handleEmojiStatusHand(message);
           break;
+		case "UpdateRecordingTimerEvtMsg":
+		  handleUpdateRecordingTimer(message);
+		  break;
         case "GetRecordingStatusRespMsg":
           handleGetRecordingStatusReply(message);
           break;
@@ -226,6 +232,7 @@ package org.bigbluebutton.modules.users.services
       if (UsersUtil.isMe(vu.intId)) {
         LiveMeeting.inst().me.muted = vu.muted;
         LiveMeeting.inst().me.inVoiceConf = true;
+		//Toaster.toast(ResourceUtil.getInstance().getString("bbb.notification.audio.joined"), ToastType.INFO, ToastIcon.AUDIO);
       }
       
       var bbbEvent:BBBEvent = new BBBEvent(BBBEvent.USER_VOICE_JOINED);
@@ -244,6 +251,7 @@ package org.bigbluebutton.modules.users.services
       if (UsersUtil.isMe(intId)) {
         LiveMeeting.inst().me.muted = false;
         LiveMeeting.inst().me.inVoiceConf = false;
+		//Toaster.toast(ResourceUtil.getInstance().getString("bbb.notification.audio.left"), ToastType.INFO, ToastIcon.AUDIO);
       }
       
       var bbbEvent:BBBEvent = new BBBEvent(BBBEvent.USER_VOICE_LEFT);
@@ -305,8 +313,7 @@ package org.bigbluebutton.modules.users.services
     private function handleGetUsersMeetingRespMsg(msg: Object):void {
       var body: Object = msg.body as Object
       var users: Array = body.users as Array;
-      LOGGER.debug("Num USERs = " + users.length);
-      
+
       for (var i:int = 0; i < users.length; i++) {
         var user:Object = users[i] as Object;
         processUserJoinedMeetingMsg(user);
@@ -350,7 +357,8 @@ package org.bigbluebutton.modules.users.services
       var locked: Boolean = user.locked as Boolean;
       var presenter: Boolean = user.presenter as Boolean;
       var avatar: String = user.avatar as String;
-      
+      // var clientType: String = user.clientType as String;
+
       var user2x: User2x = new User2x();
       user2x.intId = intId;
       user2x.extId = extId;
@@ -364,8 +372,6 @@ package org.bigbluebutton.modules.users.services
       user2x.presenter = presenter;
       user2x.avatar = avatar;
       
-      LOGGER.debug("USER JOINED = " + JSON.stringify(user2x));
-
       var oldUser: User2x = LiveMeeting.inst().users.getUser(intId);
       var wasPresenterBefore: Boolean = false;
       if (oldUser != null && oldUser.presenter) {
@@ -396,13 +402,13 @@ package org.bigbluebutton.modules.users.services
         LiveMeeting.inst().me.locked = locked;
         UsersUtil.applyLockSettings();
       }
+
     }
     
     private function handleGetVoiceUsersMeetingRespMsg(msg:Object):void {
       var body: Object = msg.body as Object;
       var users: Array = body.users as Array;
-      LOGGER.debug("Num USERs = " + users.length);
-      
+
       for (var i:int = 0; i < users.length; i++) {
         var user:Object = users[i] as Object;
         var intId: String = user.intId as String;
@@ -423,8 +429,7 @@ package org.bigbluebutton.modules.users.services
         vu.muted = muted;
         vu.talking = talking;
         vu.listenOnly = listenOnly;
-        
-        LOGGER.debug("USER = " + JSON.stringify(vu));
+				
         LiveMeeting.inst().voiceUsers.add(vu);
       }
     }
@@ -432,7 +437,6 @@ package org.bigbluebutton.modules.users.services
     private function handleGetWebcamStreamsMeetingRespMsg(msg:Object):void {
       var body: Object = msg.body as Object
       var streams: Array = body.streams as Array;
-      LOGGER.debug("Num streams = " + streams.length);
       
       for (var i:int = 0; i < streams.length; i++) {
         var stream:Object = streams[i] as Object;
@@ -451,7 +455,6 @@ package org.bigbluebutton.modules.users.services
           webcamStream.attributes = attributes;
           webcamStream.viewers = viewers;
 
-          LOGGER.debug("STREAM = " + JSON.stringify(webcamStream));
           LiveMeeting.inst().webcams.add(webcamStream);
         }
       }
@@ -463,6 +466,12 @@ package org.bigbluebutton.modules.users.services
       var stream: String = body.stream as String;
       var vidWidth: Number = body.vidWidth as Number;
       var vidHeight: Number = body.vidHeight as Number;
+			
+			var logData:Object = UsersUtil.initLogData();
+			logData.tags = ["webrtc-screenshare"];
+			logData.logCode = "screenshare-rtmp-broadcast-started";
+			logData.stream = stream;
+			LOGGER.info(JSON.stringify(logData));
       
       var event:WebRTCViewStreamEvent = new WebRTCViewStreamEvent(WebRTCViewStreamEvent.START);
       
@@ -479,6 +488,12 @@ package org.bigbluebutton.modules.users.services
       var vidWidth: Number = body.vidWidth as Number;
       var vidHeight: Number = body.vidHeight as Number;
       
+			var logData:Object = UsersUtil.initLogData();
+			logData.tags = ["webrtc-screenshare"];
+			logData.logCode = "screenshare-rtmp-broadcast-stopped";
+			logData.stream = stream;
+			LOGGER.info(JSON.stringify(logData));
+			
       var event:WebRTCViewStreamEvent = new WebRTCViewStreamEvent(WebRTCViewStreamEvent.STOP);
       
       event.videoWidth = vidWidth;
@@ -496,8 +511,8 @@ package org.bigbluebutton.modules.users.services
       
       var logData:Object = UsersUtil.initLogData();
       logData.tags = ["users"];
-      logData.status = "user_ejected";
-      logData.message = "User ejected from meeting.";
+      logData.logCode = "received_user_ejected";
+			logData.userId = userId;
       LOGGER.debug(JSON.stringify(logData));
     }
     
@@ -523,7 +538,6 @@ package org.bigbluebutton.modules.users.services
     }
     
     private function handlePermissionsSettingsChanged(msg:Object):void {
-      LOGGER.debug("handlePermissionsSettingsChanged {0} \n", [JSON.stringify(msg.body)]);
       var body:Object = msg.body as Object;
       
       var lockSettings:LockSettingsVO = new LockSettingsVO(
@@ -538,8 +552,7 @@ package org.bigbluebutton.modules.users.services
     }
     
     private function handleGetLockSettings(msg:Object):void {
-      LOGGER.debug("handleGetLockSettings {0} \n", [msg.body]);
-      
+   
       var body:Object = msg.body as Object;
       
       var lockSettings:LockSettingsVO = new LockSettingsVO(
@@ -554,7 +567,6 @@ package org.bigbluebutton.modules.users.services
     }
     
 	private function handleLockSettingsNotInitialized(msg:Object):void {
-		LOGGER.debug("handleLockSettingsNotInitialized received");
 		UsersUtil.lockSettingsNotInitialized();
 	}
 	
@@ -564,7 +576,7 @@ package org.bigbluebutton.modules.users.services
       var e:BBBEvent = new BBBEvent(BBBEvent.CHANGE_RECORDING_STATUS);
       e.payload.remote = true;
       e.payload.recording = recording;
-      
+	  
       dispatcher.dispatchEvent(e);
     }
 	
@@ -632,7 +644,6 @@ package org.bigbluebutton.modules.users.services
     }
 	
 	private function handleWebcamsOnlyForModeratorChanged(msg: Object):void {
-		LOGGER.debug("handleWebcamsOnlyForModeratorChanged {0} \n", [JSON.stringify(msg.body)]);
 		var body:Object = msg.body as Object;
 		var webcamsOnlyForModerator: Boolean = body.webcamsOnlyForModerator as Boolean;
 		sendWebcamsOnlyForModeratorChanged(webcamsOnlyForModerator);
@@ -721,54 +732,68 @@ package org.bigbluebutton.modules.users.services
       }
       
     }
+	
+	private function handleUpdateRecordingTimer(msg:Object):void {
+		if (msg.body.time > 0) {
+			TimerUtil.recordingTimeReceived = true;
+		} else {
+			TimerUtil.recordingTimeReceived = false;
+		}
+		
+		var e:UpdateRecordingTimerEvent = new UpdateRecordingTimerEvent(msg.body.time);
+		dispatcher.dispatchEvent(e);
+	}
     
     private function sendUserEmojiChangedEvent(userId: String, emoji: String):void{
       var dispatcher:Dispatcher = new Dispatcher();
       dispatcher.dispatchEvent(new UserEmojiChangedEvent(userId, emoji));
-    }
-    
-    
-    private function handleUserBroadcastCamStartedEvtMsg(msg:Object):void {
-      var userId: String = msg.body.userId as String; 
-      var streamId: String = msg.body.stream as String;
-      var logData:Object = UsersUtil.initLogData();
-      logData.tags = ["webcam"];
-      logData.message = "UserBroadcastCamStartedEvtMsg server message";
-      logData.user.webcamStream = streamId;
+	}
 
-      if (isValidFlashWebcamStream(streamId)) {
+	private function handleUserBroadcastCamStartedEvtMsg(msg:Object):void {
+		var userId:String = msg.body.userId as String;
+		var streamId:String = msg.body.stream as String;
+		var logData:Object = UsersUtil.initLogData();
+		logData.tags = ["webcam"];
+		logData.logCode = "user_broadcasting_camera_start";
+		logData.userId = userId;
+		logData.streamId = streamId;
 
-        LOGGER.info(JSON.stringify(logData));
+		if (isValidFlashWebcamStream(streamId)) {
 
-        var mediaStream: MediaStream = new MediaStream(streamId, userId)
-          LiveMeeting.inst().webcams.add(mediaStream);
+			LOGGER.info(JSON.stringify(logData));
 
-        var webUser: User2x = UsersUtil.getUser(userId);
-        if (webUser != null) {
-          sendStreamStartedEvent(userId, webUser.name, streamId);
-        }
-      }
-    }
-    
-    private function sendStreamStartedEvent(userId: String, name: String, stream: String):void{
-      var dispatcher:Dispatcher = new Dispatcher();
-      dispatcher.dispatchEvent(new StreamStartedEvent(userId, name, stream));
-    }
-    
-    private function handleUserBroadcastCamStoppedEvtMsg(msg: Object):void {  
-      var userId: String = msg.body.userId as String; 
-      var stream: String = msg.body.stream as String;
-      
-      var logData:Object = UsersUtil.initLogData();
-      logData.tags = ["webcam"];
-      logData.message = "UserBroadcastCamStoppedEvtMsg server message";
-      logData.user.webcamStream = stream;
-      LOGGER.info(JSON.stringify(logData));
-      
-      LiveMeeting.inst().webcams.remove(stream);
-      
-      sendStreamStoppedEvent(userId, stream);
-    }
+			var mediaStream:MediaStream = new MediaStream(streamId, userId)
+			LiveMeeting.inst().webcams.add(mediaStream);
+
+			var webUser:User2x = UsersUtil.getUser(userId);
+			if (webUser != null) {
+				sendStreamStartedEvent(userId, webUser.name, streamId);
+			}
+		}
+	}
+
+	private function sendStreamStartedEvent(userId:String, name:String, stream:String):void {
+		var dispatcher:Dispatcher = new Dispatcher();
+		dispatcher.dispatchEvent(new StreamStartedEvent(userId, name, stream));
+	}
+
+	private function handleUserBroadcastCamStoppedEvtMsg(msg:Object):void {
+		var userId:String = msg.body.userId as String;
+		var stream:String = msg.body.stream as String;
+
+		var logData:Object = UsersUtil.initLogData();
+		logData.tags = ["webcam"];
+		logData.logCode = "user_broadcasting_camera_stop";
+		logData.userId = userId;
+		logData.streamId = stream;
+		LOGGER.info(JSON.stringify(logData));
+
+		var mediaStream:MediaStream = LiveMeeting.inst().webcams.remove(stream);
+
+		if (mediaStream != null) {
+			sendStreamStoppedEvent(mediaStream.userId, stream);
+		}
+	}
     
     private function sendStreamStoppedEvent(userId: String, streamId: String):void{
       var dispatcher:Dispatcher = new Dispatcher();
@@ -783,6 +808,7 @@ package org.bigbluebutton.modules.users.services
         breakoutRoom.externalMeetingId = room.externalId as String;
         breakoutRoom.name = room.name as String;
         breakoutRoom.sequence = room.sequence as Number;
+		breakoutRoom.freeJoin = room.freeJoin as Boolean;
         LiveMeeting.inst().breakoutRooms.addBreakoutRoom(breakoutRoom);
       }
       LiveMeeting.inst().breakoutRooms.breakoutRoomsReady = msg.body.roomsReady as Boolean;
@@ -833,12 +859,14 @@ package org.bigbluebutton.modules.users.services
       var externalId: String = breakout.externalId as String;
       var name: String = breakout.name as String;
       var sequence: int = breakout.sequence as Number;
+      var freeJoin: Boolean = breakout.freeJoin as Boolean;
       
       var breakoutRoom : BreakoutRoom = new BreakoutRoom();
       breakoutRoom.meetingId = breakoutId;
       breakoutRoom.externalMeetingId = externalId;
       breakoutRoom.name = name;
       breakoutRoom.sequence = sequence;
+      breakoutRoom.freeJoin = freeJoin;
       LiveMeeting.inst().breakoutRooms.addBreakoutRoom(breakoutRoom);
     }
     
@@ -901,7 +929,6 @@ package org.bigbluebutton.modules.users.services
     }
     
     public function handleGuestAccessDenied(msg:Object):void {
-      LOGGER.debug("*** handleGuestAccessDenied " + msg.msg + " ****");
       var map:Object = JSON.parse(msg.msg);
       
       if (UsersUtil.getMyUserID() == map.userId) {
@@ -919,6 +946,9 @@ package org.bigbluebutton.modules.users.services
       if (UsersUtil.isMe(userId)) {
         LiveMeeting.inst().me.role = role;
         dispatcher.dispatchEvent(new ChangeMyRole(role));
+        
+        // need to fake a new lock settings so that the lock state gets revalidated
+        UsersUtil.applyLockSettings();
       }
 
       dispatcher.dispatchEvent(new UserStatusChangedEvent(userId));

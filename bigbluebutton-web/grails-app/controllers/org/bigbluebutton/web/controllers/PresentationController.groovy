@@ -33,13 +33,43 @@ class PresentationController {
   def index = {
     render(view:'upload-file') 
   }
-  
+
+  def checkPresentationBeforeUploading = {
+    try {
+      def maxUploadFileSize = 30000000L // paramsProcessorUtil.getMaxPresentationFileUpload()
+      def originalUri = request.getHeader("x-original-uri")
+      def originalContentLengthString = request.getHeader("x-original-content-length")
+
+      def originalContentLength = 0
+      if (originalContentLengthString.isNumber()) {
+        originalContentLength = originalContentLengthString as int
+      }
+
+      if (originalContentLength < maxUploadFileSize
+              && 0 != originalContentLength) {
+        log.debug("CHECK FILE UPLOAD LENGTH = " + originalContentLength)
+        response.setStatus(200);
+        response.addHeader("Cache-Control", "no-cache")
+        response.contentType = 'plain/text'
+        response.outputStream << 'upload-success'
+      } else {
+        log.debug("CHECK FILE UPLOAD LENGTH = " + originalContentLength)
+        response.setStatus(200);
+        response.addHeader("Cache-Control", "no-cache")
+        response.contentType = 'plain/text'
+        response.outputStream << 'file-empty'
+      }
+    } catch (IOException e) {
+      log.error("Error in checkPresentationBeforeUploading.\n" + e.getMessage());
+    }
+  }
+
   def upload = {
     def meetingId = params.conference
     def meeting = meetingService.getNotEndedMeetingWithId(meetingId);
     if (meeting == null) {
       flash.message = 'meeting is not running'
-
+      log.debug("Upload failed. No meeting running " + meetingId)
       response.addHeader("Cache-Control", "no-cache")
       response.contentType = 'plain/text'
       response.outputStream << 'no-meeting';
@@ -73,6 +103,7 @@ class PresentationController {
            }
          }
 
+        log.debug("processing file upload " + presFilename)
          def presentationBaseUrl = presentationService.presentationBaseUrl
          UploadedPresentation uploadedPres = new UploadedPresentation(meetingId, presId,
                  presFilename, presentationBaseUrl, false /* default presentation */);
@@ -84,19 +115,19 @@ class PresentationController {
 
          uploadedPres.setUploadedFile(pres);
          presentationService.processUploadedPresentation(uploadedPres)
-
+         log.debug("file upload success " + presFilename)
          response.addHeader("Cache-Control", "no-cache")
          response.contentType = 'plain/text'
          response.outputStream << 'upload-success';
       }
     } else {
+      log.warn "Upload failed. File Empty."
       flash.message = 'file cannot be empty'
-    }
-
       response.addHeader("Cache-Control", "no-cache")
       response.contentType = 'plain/text'
       response.outputStream << 'file-empty';
     }
+  }
 
   def testConversion = {
     presentationService.testConversionProcess();
@@ -121,7 +152,9 @@ class PresentationController {
     def conf = params.conference
     def rm = params.room
     def slide = params.id
-    
+
+    log.error("Nginx should be serving this SWF file! meetingId=" + conf + ",presId=" + presentationName + ",page=" + slide);
+
     InputStream is = null;
     try {
       def pres = presentationService.showSlide(conf, rm, presentationName, slide)
@@ -132,7 +165,8 @@ class PresentationController {
         response.outputStream << bytes;
       }	
     } catch (IOException e) {
-      log.error("Error reading file.\n" + e.getMessage());
+      log.error("Failed to read SWF file. meetingId=" + conf + ",presId=" + presentationName + ",page=" + slide);
+      log.error("Error reading SWF file.\n" + e.getMessage());
     }
     
     return null;
@@ -143,7 +177,9 @@ class PresentationController {
     def conf = params.conference
     def rm = params.room
     def slide = params.id
-  
+
+    log.error("Nginx should be serving this SVG file! meetingId=" + conf + ",presId=" + presentationName + ",page=" + slide);
+
     InputStream is = null;
     try {
       def pres = presentationService.showSvgImage(conf, rm, presentationName, slide)
@@ -154,7 +190,8 @@ class PresentationController {
         response.outputStream << bytes;
       }
     } catch (IOException e) {
-      log.error("Error reading file.\n" + e.getMessage());
+      log.error("Failed to read SVG file. meetingId=" + conf + ",presId=" + presentationName + ",page=" + slide);
+      log.error("Error reading SVG file.\n" + e.getMessage());
     }
   
     return null;
@@ -165,7 +202,9 @@ class PresentationController {
     def conf = params.conference
     def rm = params.room
     def thumb = params.id
-    
+
+    log.error("Nginx should be serving this thumb file! meetingId=" + conf + ",presId=" + presentationName + ",page=" + thumb);
+
     InputStream is = null;
     try {
       def pres = presentationService.showThumbnail(conf, rm, presentationName, thumb)
@@ -177,7 +216,8 @@ class PresentationController {
         response.outputStream << bytes;
       }
     } catch (IOException e) {
-      log.error("Error reading file.\n" + e.getMessage());
+      log.error("Failed to read thumb file. meetingId=" + conf + ",presId=" + presentationName + ",page=" + thumb);
+      log.error("Error reading thunb file.\n" + e.getMessage());
     }
     
     return null;
@@ -189,7 +229,9 @@ class PresentationController {
     def rm = params.room
     def textfile = params.id
     log.debug "Controller: Show textfile request for $presentationName $textfile"
-    
+
+    log.error("Nginx should be serving this text file! meetingId=" + conf + ",presId=" + presentationName + ",page=" + textfile);
+
     InputStream is = null;
     try {
       def pres = presentationService.showTextfile(conf, rm, presentationName, textfile)
@@ -204,7 +246,8 @@ class PresentationController {
         log.debug "$pres does not exist."
       }
     } catch (IOException e) {
-      log.error("Error reading file.\n" + e.getMessage());
+      log.error("Failed to read text file. meetingId=" + conf + ",presId=" + presentationName + ",page=" + textfile);
+      log.error("Error reading text file.\n" + e.getMessage());
     }
   
     return null;

@@ -8,51 +8,92 @@
 const C = require('../constants/Constants');
 const SdpWrapper = require('../utils/SdpWrapper');
 const rid = require('readable-id');
-const MediaServer = require('../media/media-server');
 const MediaSession = require('./MediaSession');
 const config = require('config');
 const kurentoUrl = config.get('kurentoUrl');
+const kurentoIp = config.get('kurentoIp');
 const Logger = require('../../../utils/Logger');
 
 module.exports = class SdpSession extends MediaSession {
-  constructor(emitter, sdp = null, room, type = 'WebRtcEndpoint') {
-    super(emitter, room, type);
+  constructor(
+    emitter,
+    offer = null,
+    room,
+    type = 'WebRtcEndpoint',
+    options
+  ) {
+    super(emitter, room, type, options);
+    Logger.info("[mcs-sdp-session] New session with options", options);
     // {SdpWrapper} SdpWrapper
-    this._sdp;
-    if (sdp && type) {
-      this.setSdp(sdp, type);
+    this._offer;
+    this._answer;
+
+    if (offer) {
+      this.setOffer(offer);
     }
   }
 
-  async setSdp (sdp, type) {
-    this._sdp = new SdpWrapper(sdp, type);
-    await this._sdp.processSdp();
+  setOffer (offer) {
+    if (offer) {
+      this._offer = new SdpWrapper(offer, this._type);
+    }
   }
 
-  async processDescriptor () {
-    try {
-      const answer = await this._MediaServer.processOffer(this._mediaElement, this._sdp.getPlainSdp());
+  setAnswer (answer) {
+    if (answer) {
+      this._answer = new SdpWrapper(answer, this._type);
+    }
+  }
 
-      if (this._type === 'WebRtcEndpoint') {
-        this._MediaServer.gatherCandidates(this._mediaElement);
+  process () {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const answer = await this._MediaServer.processOffer(this._mediaElement,
+          this._offer.plainSdp,
+          { name: this._name }
+        );
+
+        this.setAnswer(answer);
+
+        // Checks if the media server was able to find a compatible media line
+        if (answer && !this._hasAvailableCodec()) {
+          return reject(this._handleError(C.ERROR.MEDIA_NO_AVAILABLE_CODEC));
+        }
+
+        const { targetBitrate } = this._options;
+
+        if (answer && targetBitrate && targetBitrate !== '0') {
+          this._answer.addBandwidth('video', targetBitrate);
+        }
+
+        if (this._type !== 'WebRtcEndpoint') {
+          this._offer.replaceServerIpv4(kurentoIp);
+          return resolve(this._answer? this._answer._plainSdp : null);
+        }
+
+        await this._MediaServer.gatherCandidates(this._mediaElement);
+        resolve(this._answer._plainSdp);
       }
-
-      return Promise.resolve(answer);
-    }
-    catch (err) {
-      err = this._handleError(err);
-      return Promise.reject(err);
-    }
+      catch (err) {
+        return reject(this._handleError(err));
+      }
+    });
   }
 
-  async addIceCandidate (candidate) {
-    try {
-      await this._MediaServer.addIceCandidate(this._mediaElement, candidate);
-      Promise.resolve();
-    }
-    catch (err) {
-      err = this._handleError(err);
-      Promise.reject(err);
-    }
+  addIceCandidate (candidate) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        await this._MediaServer.addIceCandidate(this._mediaElement, candidate);
+        resolve();
+      }
+      catch (err) {
+        return reject(this._handleError(err));
+      }
+    });
+  }
+
+    _hasAvailableCodec () {
+    return (this._offer.hasAvailableVideoCodec() && this._answer.hasAvailableVideoCodec()) ||
+      (this._offer.hasAvailableAudioCodec() && this._answer.hasAvailableAudioCodec());
   }
 }

@@ -32,7 +32,8 @@ public class Meeting {
 	private String intMeetingId;
 	private String parentMeetingId = "bbb-none"; // Initialize so we don't send null in the json message.
 	private Integer sequence = 0;
-	private Integer duration = 0;	 
+	private Boolean freeJoin = false;
+    private Integer duration = 0;	 
 	private long createdTime = 0;
 	private long startTime = 0;
 	private long endTime = 0;
@@ -50,6 +51,7 @@ public class Meeting {
 	private boolean record;
 	private boolean autoStartRecording = false;
 	private boolean allowStartStopRecording = false;
+	private boolean haveRecordingMarks = false;
 	private boolean webcamsOnlyForModerator = false;
 	private String dialNumber;
 	private String defaultAvatarURL;
@@ -176,6 +178,14 @@ public class Meeting {
         return sequence;
     }
 
+    public Boolean isFreeJoin() {
+        return freeJoin;
+    }
+
+    public void setFreeJoin(Boolean freeJoin) {
+        this.freeJoin = freeJoin;
+    }
+	
 	public Integer getDuration() {
 		return duration;
 	}
@@ -203,7 +213,16 @@ public class Meeting {
 	public Boolean isBreakout() {
 	  return isBreakout;
 	}
+	
+	   
+    public void setHaveRecordingMarks(boolean marks) {
+        haveRecordingMarks = marks;
+    }
 
+    public boolean haveRecordingMarks() {
+        return  haveRecordingMarks;
+    }
+    
 	public String getName() {
 		return name;
 	}
@@ -486,7 +505,7 @@ public class Meeting {
     		this.allowStartStopRecording = allow;
     		return this;
     	}
-    	
+    
         public Builder withWebcamsOnlyForModerator(boolean only) {
             this.webcamsOnlyForModerator = only;
             return this;

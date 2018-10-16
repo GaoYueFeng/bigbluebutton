@@ -62,7 +62,7 @@ class MettingMessageQueue {
       this.debug(`${eventName} completed ${isAsync ? 'async' : 'sync'}`);
       called = true;
       const queueLength = this.queue.length();
-      if (queueLength > 0) {
+      if (queueLength > 100) {
         Logger.error(`prev queue size=${queueLength} `);
       }
       next();
@@ -105,8 +105,9 @@ class RedisPubSub {
     this.config = config;
 
     this.didSendRequestEvent = false;
-    this.pub = Redis.createClient();
-    this.sub = Redis.createClient();
+    const redisHost = process.env.REDIS_HOST || Meteor.settings.private.redis.host;
+    this.pub = Redis.createClient(Meteor.settings.private.redis.port, redisHost);
+    this.sub = Redis.createClient(Meteor.settings.private.redis.port, redisHost);
     this.emitter = new EventEmitter2();
     this.mettingsQueues = {};
 

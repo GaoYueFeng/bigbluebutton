@@ -40,15 +40,6 @@ const defaultProps = {
 class UserList extends Component {
   constructor(props) {
     super(props);
-    this.state = {
-      compact: this.props.compact,
-    };
-
-    this.handleToggleCompactView = this.handleToggleCompactView.bind(this);
-  }
-
-  handleToggleCompactView() {
-    this.setState({ compact: !this.state.compact });
   }
 
   render() {
@@ -71,6 +62,9 @@ class UserList extends Component {
       isPublicChat,
       roving,
       CustomLogoUrl,
+      handleEmojiChange,
+      getEmojiList,
+      getEmoji,
     } = this.props;
 
     return (
@@ -100,6 +94,9 @@ class UserList extends Component {
           isMeetingLocked,
           isPublicChat,
           roving,
+          handleEmojiChange,
+          getEmojiList,
+          getEmoji,
         }
       }
         />}
